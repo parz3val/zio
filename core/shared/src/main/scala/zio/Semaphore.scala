@@ -99,6 +99,7 @@ object Semaphore {
   object unsafe {
     def make(permits: Long)(implicit unsafe: Unsafe): Semaphore =
       new Semaphore {
+        val capacity = permits
         val ref = Ref.unsafe.make[Either[ScalaQueue[(Promise[Nothing, Unit], Long)], Long]](Right(permits))
 
         def available(implicit trace: Trace): UIO[Long] =
@@ -140,8 +141,14 @@ object Semaphore {
         }
 
         def tryReserve(n: Long)(implicit trace: Trace): UIO[Option[Reservation]] =
-          if (n < 0) ZIO.die(new IllegalArgumentException(s"Unexpected negative `$n` permits requested."))
-          else if (n == 0L) ZIO.succeed(Some(Reservation.zero))
+          if (n < 0)
+            ZIO.die(new IllegalArgumentException(s"Unexpected negative `$n` permits requested."))
+          else if (n > capacity)
+            ZIO.die(new IllegalArgumentException(
+              s"Cannot acquire `$n` permits from a semaphore with `$capacity`."
+            ))
+          else if (n == 0L)
+            ZIO.succeed(Some(Reservation.zero))
           else
             ref.modify {
               case Right(permits) if permits >= n =>
@@ -152,6 +159,10 @@ object Semaphore {
         def reserve(n: Long)(implicit trace: Trace): UIO[Reservation] =
           if (n < 0)
             ZIO.die(new IllegalArgumentException(s"Unexpected negative `$n` permits requested."))
+          else if (n > capacity)
+            ZIO.die(new IllegalArgumentException(
+              s"Cannot acquire `$n` permits from a semaphore with `$capacity`."
+            ))
           else if (n == 0L)
             ZIO.succeed(Reservation.zero)
           else

@@ -46,7 +46,7 @@ import zio.stacktracer.TracingImplicits.disableAutoTrace
  * semaphores transactionally and later releasing them transactionally to safely
  * synchronize on access to two different mutable variables.
  */
-final class TSemaphore private (val permits: TRef[Long]) extends Serializable {
+final class TSemaphore private (val permits: TRef[Long], val capacity: Long) extends Serializable {
 
   /**
    * Acquires a single permit in transactional context.
@@ -58,7 +58,12 @@ final class TSemaphore private (val permits: TRef[Long]) extends Serializable {
    * Acquires the specified number of permits in a transactional context.
    */
   def acquireN(n: Long): USTM[Unit] =
-    acquireBetween(n, n).unit
+    if (n > capacity)
+      ZSTM.die(new IllegalArgumentException(
+        s"Cannot acquire `$n` permits from a semaphore with `$capacity`."
+      ))
+    else
+      acquireBetween(n, n).unit
 
   /**
    * Acquire at least `min` permits and at most `max` permits in a transactional
@@ -69,6 +74,11 @@ final class TSemaphore private (val permits: TRef[Long]) extends Serializable {
       require(min <= max, s"Unexpected `$min` > `$max` passed to acquireRange.")
       assertNonNegative(min)
       assertNonNegative(max)
+
+      if (min > capacity)
+        throw new IllegalArgumentException(
+          s"Cannot acquire `$min` permits from a semaphore with `$capacity`."
+        )
 
       val available: Long = permits.unsafeGet(journal)
       if (available < min) {
@@ -121,6 +131,10 @@ final class TSemaphore private (val permits: TRef[Long]) extends Serializable {
   def tryAcquireN(n: Long): USTM[Boolean] =
     ZSTM.Effect { (journal, _, _) =>
       assertNonNegative(n)
+      if (n > capacity)
+        throw new IllegalArgumentException(
+          s"Cannot acquire `$n` permits from a semaphore with `$capacity`."
+        )
 
       val available: Long = permits.unsafeGet(journal)
       if (available >= n) {
@@ -235,6 +249,6 @@ object TSemaphore {
 
   object unsafe {
     def make(permits: Long)(implicit unsafe: Unsafe): TSemaphore =
-      new TSemaphore(TRef.unsafeMake(permits))
+      new TSemaphore(TRef.unsafeMake(permits), permits)
   }
 }
